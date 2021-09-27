@@ -1,0 +1,176 @@
+let SOC = require("socket.io");
+const redis = require("redis");
+const crons = require("../crons");
+const { verifySocket } = require("./../security/managers/ticket");
+// let Team = require('../components/team');
+let io;
+
+const redisClient = redis.createClient({
+  host: "127.0.0.1",
+  port: 6379,
+});
+
+start = function (server) {
+  io = SOC(server, {
+    path: "/ihawk/",
+    adapter: require("socket.io-redis")({
+      pubClient: redisClient,
+      subClient: redisClient.duplicate(),
+    }),
+    cors: {
+      origin: "http://localhost:4200",
+      methods: ["GET", "POST"],
+    },
+    serveClient: false,
+    allowedHeaders: ["authorization"],
+    credentials: true,
+  });
+  io.use(function (socket, next) {
+    if (socket.handshake.auth && socket.handshake.auth.token) {
+      if (verifySocket(socket.handshake.auth.token)) {
+        next();
+      } else {
+        return next(new Error("Not Authentication Please try to login again"));
+      }
+    } else {
+      return next(new Error("Not Authentication Please try to login again"));
+    }
+  }).on("connection", async (socket) => {
+    // console.log("####-#### some one connected ####-#### ", socket.id);
+    socket.on("joinRequest", (pm) => {
+      // console.log(socket.nsp.adapter.rooms['hong@mailsac.com'])
+      // for(room in socket.nsp.adapter.rooms) {
+      //   console.log(room, "Room");
+      // }
+      socket.leave(socket.id);
+      socket.leave(pm.sender);
+      socket.join(pm.sender);
+    });
+
+    socket.on("mail_starred", (data) => {
+      io.to(data.email).emit("mail_toggle_starred", {});
+    });
+
+    socket.on("mail_is_read", (data) => {
+      io.to(data.email).emit("mail_read", {});
+    });
+
+    socket.on("mail_spammed", (data) => {
+      io.to(data.email).emit("mail_toggle_spam", {});
+    });
+
+    socket.on("mail_un_spammed", (data) => {
+      io.to(data.email).emit("mail_toggle_unspam", {});
+    });
+
+    socket.on("mail_junk", (data) => {
+      io.to(data.email).emit("mail_toggle_junk", {});
+    });
+
+    socket.on("mail_un_junked", (data) => {
+      io.to(data.email).emit("mail_toggle_unjunk", {});
+    });
+
+    socket.on("removeFriend", (userData) => {
+      io.to(userData.receiver).emit("removeContact", {
+        from: userData.sender,
+        to: userData.receiver,
+        friendshipID: userData.friendship,
+      });
+    });
+
+    socket.on("disconnect", (reason) => {
+      // for (room in socket.nsp.adapter.rooms) {
+      //   console.log(room, "Room");
+      // }
+      socket.leave(socket.id);
+      // console.log(socket.nsp.adapter.rooms);
+      // io.disconnectSockets();
+      console.log("User disconnect", reason);
+    });
+
+    socket.on("connect_error", (err) => {
+      console.log(err.message);
+    });
+  });
+};
+
+sendMail = function (receiver, sender, mail, notify) {
+  io.to(receiver).emit("new_Mail", {
+    mail: mail,
+  });
+
+  io.to(receiver).emit("new_Mail_count", {});
+
+  io.to(sender).emit("sent_Mail_count", {});
+
+  io.to(receiver).emit("notify_new_Mail", {
+    notify,
+  });
+};
+
+acceptRequest = function (
+  receiver,
+  sender,
+  confirm_sender,
+  confirm_receiver,
+  notify
+) {
+  // receiver: who send the invitations
+  // sender: who accept invitations and receive invitations
+
+  io.to(receiver).emit("invitation_confirmed", {
+    confirm_receiver,
+  });
+
+  io.to(sender).emit("invitation_accepted", {
+    confirm_sender,
+  });
+
+  io.to(receiver).emit("notify_invitation_accepted", {
+    notify,
+  });
+};
+
+sendInvitation = function (receiver, sender, invitation, notify) {
+  io.to(receiver).emit("newInvitation", {
+    receiver,
+    sender,
+    invitation,
+  });
+
+  io.to(receiver).emit("notify_newInvitation", {
+    notify,
+  });
+
+  io.to(receiver).emit("notify_new_invitation_header", {
+    notify,
+  });
+};
+
+ignoreInvitation = function (receiver, notify) {
+  io.to(receiver).emit("notify_ignore_Invitation", {
+    notify,
+  });
+};
+
+mark_notify_seen = function (receiver) {
+  io.to(receiver).emit("notify_read", {});
+  io.to(receiver).emit("notify_read_drop", {});
+};
+
+// chat
+sendMessage = function (receiver, message) {
+  console.log(receiver, message);
+  io.to(receiver).emit("new_message", message);
+};
+
+module.exports = {
+  socketStart: start,
+  sendMail,
+  acceptRequest,
+  sendInvitation,
+  ignoreInvitation,
+  mark_notify_seen,
+  sendMessage,
+};
